@@ -8,6 +8,8 @@ import com.beachape.video.{ Dimensions, Webcam }
 import org.bytedeco.javacv.CanvasFrame
 
 object WebcamWindow extends App {
+  import org.bytedeco.javacpp.opencv_video._
+  import org.bytedeco.javacpp.opencv_videoio._
 
   implicit val system = ActorSystem()
   implicit val materializer = ActorMaterializer()
@@ -20,7 +22,7 @@ object WebcamWindow extends App {
   val webcamSource = Webcam.source(deviceId = 0, dimensions = imageDimensions)
 
   val graph = webcamSource
-    .map(MediaConversion.toMat) // most OpenCV manipulations require a Matrix
+    //.map(MediaConversion.toMat) // most OpenCV manipulations require a Matrix
     .map(Flip.horizontal)
     .map(MediaConversion.toFrame) // convert back to a frame
     .map(canvas.showImage)

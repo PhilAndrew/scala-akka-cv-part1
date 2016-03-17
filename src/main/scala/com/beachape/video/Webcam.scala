@@ -1,11 +1,14 @@
 package com.beachape.video
 
-import akka.actor.{ DeadLetterSuppression, Props, ActorSystem, ActorLogging }
+import akka.actor.{ ActorLogging, ActorSystem, DeadLetterSuppression, Props }
+import akka.stream.Materializer
 import akka.stream.actor.ActorPublisher
 import akka.stream.actor.ActorPublisherMessage.{ Cancel, Request }
-import akka.stream.scaladsl.Source
+import akka.stream.scaladsl.{ Sink, Source }
 import org.bytedeco.javacpp.opencv_core._
-import org.bytedeco.javacv.{ FrameGrabber, Frame }
+import org.bytedeco.javacpp.opencv_videoio
+import org.bytedeco.javacpp.opencv_videoio.VideoCapture
+import org.bytedeco.javacv.{ Frame, FrameGrabber, OpenCVFrameGrabber }
 import org.bytedeco.javacv.FrameGrabber.ImageMode
 
 /**
@@ -29,7 +32,7 @@ object Webcam {
     dimensions: Dimensions,
     bitsPerPixel: Int = CV_8U,
     imageMode: ImageMode = ImageMode.COLOR
-  )(implicit system: ActorSystem): Source[Frame, Unit] = {
+  )(implicit system: ActorSystem): Source[Mat, Unit] = {
     val props = Props(
       new WebcamFramePublisher(
         deviceId = deviceId,
@@ -40,7 +43,7 @@ object Webcam {
       )
     )
     val webcamActorRef = system.actorOf(props)
-    val webcamActorPublisher = ActorPublisher[Frame](webcamActorRef)
+    val webcamActorPublisher = ActorPublisher[Mat](webcamActorRef)
 
     Source.fromPublisher(webcamActorPublisher)
   }
@@ -52,13 +55,36 @@ object Webcam {
     imageHeight: Int,
     bitsPerPixel: Int,
     imageMode: ImageMode
-  ): FrameGrabber = synchronized {
-    val g = FrameGrabber.createDefault(deviceId)
-    g.setImageWidth(imageWidth)
-    g.setImageHeight(imageHeight)
-    g.setBitsPerPixel(bitsPerPixel)
-    g.setImageMode(imageMode)
-    g.start()
+  ): VideoCapture = synchronized {
+    val g = new VideoCapture(0)
+
+    /*
+         -   **CAP_PROP_POS_MSEC** Current position of the video file in milliseconds.
+     -   **CAP_PROP_POS_FRAMES** 0-based index of the frame to be decoded/captured next.
+     -   **CAP_PROP_POS_AVI_RATIO** Relative position of the video file: 0 - start of the
+         film, 1 - end of the film.
+     -   **CAP_PROP_FRAME_WIDTH** Width of the frames in the video stream.
+     -   **CAP_PROP_FRAME_HEIGHT** Height of the frames in the video stream.
+     -   **CAP_PROP_FPS** Frame rate.
+     -   **CAP_PROP_FOURCC** 4-character code of codec.
+     -   **CAP_PROP_FRAME_COUNT** Number of frames in the video file.
+     -   **CAP_PROP_FORMAT** Format of the Mat objects returned by retrieve() .
+     -   **CAP_PROP_MODE** Backend-specific value indicating the current capture mode.
+     -   **CAP_PROP_BRIGHTNESS** Brightness of the image (only for cameras).
+     -   **CAP_PROP_CONTRAST** Contrast of the image (only for cameras).
+     -   **CAP_PROP_SATURATION** Saturation of the image (only for cameras).
+     -   **CAP_PROP_HUE** Hue of the image (only for cameras).
+     -   **CAP_PROP_GAIN** Gain of the image (only for cameras).
+     -   **CAP_PROP_EXPOSURE** Exposure (only for cameras).
+     -   **CAP_PROP_CONVERT_RGB** Boolean flags indicating whether images should be converted
+         to RGB.
+     -   **CAP_PROP_WHITE_BALANCE** Currently unsupported
+     -   **CAP_PROP_RECTIFICATION** Rectification flag for stereo cameras (note: only supported
+         by DC1394 v 2.x backend currently)
+     */
+
+    g.set(opencv_videoio.CAP_PROP_FRAME_WIDTH, imageWidth)
+    g.set(opencv_videoio.CAP_PROP_FRAME_HEIGHT, imageHeight)
     g
   }
 
@@ -71,7 +97,7 @@ object Webcam {
       imageHeight: Int,
       bitsPerPixel: Int,
       imageMode: ImageMode
-  ) extends ActorPublisher[Frame] with ActorLogging {
+  ) extends ActorPublisher[Mat] with ActorLogging {
 
     private implicit val ec = context.dispatcher
 
@@ -96,15 +122,17 @@ object Webcam {
         /*
           Grabbing a frame is a blocking I/O operation, so we don't send too many at once.
          */
-        grabFrame().foreach(onNext)
+        graphFrame().foreach(onNext)
         if (totalDemand > 0) {
           self ! Continue
         }
       }
     }
 
-    private def grabFrame(): Option[Frame] = {
-      Option(grabber.grab())
+    private def graphFrame(): Option[Mat] = {
+      val frame = new Mat()
+      grabber.read(frame)
+      Option(frame)
     }
   }
 
